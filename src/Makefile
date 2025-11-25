@@ -45,7 +45,7 @@ SOURCES = simple-test.cpp
 # 	$(CXX) $(CXX_FLAGS) -o $(TARGET).o $(SOURCES)
 
 $(TARGET): $(SOURCES)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(LIB_PATHS) $(SOURCES) $(LIBS) $(FRAMEWORKS) -o $(TARGET).o
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(LIB_PATHS) $(SOURCES) $(LIBS) $(FRAMEWORKS) -o $(TARGET)
 
 
 clean:

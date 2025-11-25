@@ -10,6 +10,8 @@
         "lcommon",
         "lggml",
         "lllama",
+        "lmstudio",
+        "Qwen",
         "Wextra"
     ]
 }
