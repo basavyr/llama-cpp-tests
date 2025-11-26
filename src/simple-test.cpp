@@ -125,7 +125,16 @@ int main()
     }
     std::cout << std::endl;
 
-    ContextInit context = initialize_context(model, n_input_tokens, MAX_OUT_TOKENS);
+    // ContextInit context = initialize_context(model, n_input_tokens, MAX_OUT_TOKENS);
+    llama_context_params ctx_params = llama_context_default_params();
+    // n_ctx is the context size
+    ctx_params.n_ctx = n_input_tokens + MAX_OUT_TOKENS - 1;
+    // n_batch is the maximum number of tokens that can be processed in a single call to llama_decode
+    ctx_params.n_batch = n_input_tokens;
+    // enable performance counters
+    ctx_params.no_perf = false;
+
+    llama_context *ctx = llama_init_from_model(model, ctx_params);
 
     auto sampler_params = llama_sampler_chain_default_params();
     sampler_params.no_perf = false;
@@ -138,16 +147,68 @@ int main()
         print_token(t, vocab);
     }
 
+    /*
+    aregs:
+        int32_t         n_tokens;
+        llama_token  *  token;
+        float        *  embd;
+        llama_pos    *  pos;
+        int32_t      *  n_seq_id;
+        llama_seq_id ** seq_id;
+        int8_t       *  logits;
+    */
     llama_batch batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
 
     llama_token decoder_start_token_id = llama_model_decoder_start_token(model);
+    printf("start token: %i\n", decoder_start_token_id); // for decoder it should be -1
+
     if (decoder_start_token_id == LLAMA_TOKEN_NULL)
     {
         decoder_start_token_id = llama_vocab_bos(vocab);
     }
-    batch = llama_batch_get_one(&decoder_start_token_id, 1);
+    // batch = llama_batch_get_one(&decoder_start_token_id, 1);
 
-    print_token(decoder_start_token_id, vocab);
+    // print_token(decoder_start_token_id, vocab);
+
+    int decode_steps = 0;
+    llama_token new_token_id;
+    printf("batch tokens: %i\n", batch.n_tokens);
+    printf("input tokens: %i\n", n_input_tokens);
+    printf("MAX_OUT_TOKENS: %i\n", MAX_OUT_TOKENS);
+    for (int n_pos = 0; n_pos + batch.n_tokens < n_input_tokens + MAX_OUT_TOKENS;)
+    {
+        // evaluate the current batch with the transformer model
+        // if (llama_decode(context.ctx, batch))
+        // {
+        //     fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
+        //     return 1;
+        // }
+        llama_decode(ctx, batch);
+        n_pos += batch.n_tokens;
+
+        // sampling the next token
+        {
+            new_token_id = llama_sampler_sample(sampler, ctx, -1);
+            // printf("(pos %i) -> new token id: %i\n", n_pos, new_token_id);
+            // is it an end of generation?
+            if (llama_vocab_is_eog(vocab, new_token_id))
+            {
+                break;
+            }
+
+            char buffer[128];
+            int current_token_id = llama_token_to_piece(vocab, new_token_id, buffer, sizeof(buffer), 0, true); // this must be positive
+            std::string token_string(buffer, current_token_id);
+            printf("%s", token_string.c_str());
+            fflush(stdout);
+
+            batch = llama_batch_get_one(&new_token_id, 1);
+
+            decode_steps += 1;
+        }
+    }
+
+    std::cout << "\ndecode steps: " << decode_steps;
 
     return 0;
 }
