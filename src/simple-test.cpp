@@ -44,7 +44,7 @@ struct ContextInit
     llama_context *ctx;
 };
 
-ContextInit initialize_context(llama_model *model, int n_input_tokens, const int max_output_tokens)
+ContextInit get_context(llama_model *model, int n_input_tokens, int max_output_tokens)
 {
     // llama model should be passed as a pointer, since it is an opaque pointer and it cannot be used via &
     // source: https://stackoverflow.com/questions/7058339/when-should-i-use-pointers-instead-of-references-in-api-design/7058373#7058373
@@ -67,88 +67,26 @@ void print_token(int token_id, const llama_vocab *vocab)
     printf("Token: %i -> Str: %s\n", token_id, token_as_str.c_str());
 }
 
-int main()
+llama_sampler *get_sampler()
 {
-    std::string title = "Testing inference using `llama.cpp`";
-    printf("%s\n", title.c_str());
-
-    const std::string input_prompt = "What is quantum computing?";
-    const int MAX_OUT_TOKENS = 128;
-
-    ggml_backend_load_all();
-    const std::string MODEL_PATH = "/Users/svc_sps/.lmstudio/models/lmstudio-community/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf";
-
-    ModelParams model_config = ModelParams();
-    model_config.n_gpu_layers = 99;
-    model_config.model_path = MODEL_PATH;
-    model_config.model_params = llama_model_default_params();
-
-    llama_model *model = llama_model_load_from_file(model_config.model_path.c_str(), model_config.model_params);
-
-    if (model == NULL)
-    {
-        fprintf(stderr, "%s: error: unable to load model\n", __func__);
-        return 1;
-    }
-
-    const llama_vocab *vocab = llama_model_get_vocab(model);
-
-    // get number of tokens of the input prompt
-    /*
-    args:
-    const struct llama_vocab * vocab,
-                  const char * text,
-                     int32_t   text_len,
-                 llama_token * tokens,
-                     int32_t   n_tokens_max,
-                        bool   add_special,
-                        bool   parse_special)
-    */
-    const int n_input_tokens = -llama_tokenize(vocab, input_prompt.c_str(), input_prompt.size(), NULL, 0, true, true);
-    // tokenize the prompt
-    std::vector<llama_token> prompt_tokens(n_input_tokens);
-    int n_tokens_max = prompt_tokens.size();
-
-    if (llama_tokenize(vocab, input_prompt.c_str(), input_prompt.size(), prompt_tokens.data(), n_tokens_max, true, true) < 0)
-    {
-        fprintf(stderr, "failed to tokenize the prompt\n");
-    }
-
-    fprintf(stdout, "n.o. prompt tokens: %d\nn_tokens_max: %d\n", n_input_tokens, n_tokens_max);
-
-    // check the type of the prompt tokens
-    // std::cout << type_name<decltype(prompt_tokens)>();
-    std::cout << input_prompt << " -> ";
-    for (auto &&n : prompt_tokens)
-    {
-        std::cout << n << " ";
-    }
-    std::cout << std::endl;
-
-    // ContextInit context = initialize_context(model, n_input_tokens, MAX_OUT_TOKENS);
-    llama_context_params ctx_params = llama_context_default_params();
-    // n_ctx is the context size
-    ctx_params.n_ctx = n_input_tokens + MAX_OUT_TOKENS - 1;
-    // n_batch is the maximum number of tokens that can be processed in a single call to llama_decode
-    ctx_params.n_batch = n_input_tokens;
-    // enable performance counters
-    ctx_params.no_perf = false;
-
-    llama_context *ctx = llama_init_from_model(model, ctx_params);
-
     auto sampler_params = llama_sampler_chain_default_params();
     sampler_params.no_perf = false;
     llama_sampler *sampler = llama_sampler_chain_init(sampler_params);
-
     llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
+    return sampler;
+}
 
-    for (auto &&t : prompt_tokens)
-    {
-        print_token(t, vocab);
-    }
-
+void batch_decode(
+    llama_model *model,
+    const llama_vocab *vocab,
+    llama_sampler *sampler,
+    std::vector<llama_token> *prompt_tokens,
+    ContextInit *context,
+    int n_input_tokens,
+    const int max_output_tokens)
+{
     /*
-    aregs:
+    llama_batch args:
         int32_t         n_tokens;
         llama_token  *  token;
         float        *  embd;
@@ -157,39 +95,27 @@ int main()
         llama_seq_id ** seq_id;
         int8_t       *  logits;
     */
-    llama_batch batch = llama_batch_get_one(prompt_tokens.data(), prompt_tokens.size());
+    llama_batch batch = llama_batch_get_one(prompt_tokens->data(), prompt_tokens->size()); // use `->` instead of `.` when the object is passed as a pointer
 
+    // for decoder it should be -1
     llama_token decoder_start_token_id = llama_model_decoder_start_token(model);
-    printf("start token: %i\n", decoder_start_token_id); // for decoder it should be -1
 
     if (decoder_start_token_id == LLAMA_TOKEN_NULL)
     {
         decoder_start_token_id = llama_vocab_bos(vocab);
     }
-    // batch = llama_batch_get_one(&decoder_start_token_id, 1);
-
-    // print_token(decoder_start_token_id, vocab);
 
     int decode_steps = 0;
     llama_token new_token_id;
-    printf("batch tokens: %i\n", batch.n_tokens);
-    printf("input tokens: %i\n", n_input_tokens);
-    printf("MAX_OUT_TOKENS: %i\n", MAX_OUT_TOKENS);
-    for (int n_pos = 0; n_pos + batch.n_tokens < n_input_tokens + MAX_OUT_TOKENS;)
+
+    for (int n_pos = 0; n_pos + batch.n_tokens < n_input_tokens + max_output_tokens;)
     {
-        // evaluate the current batch with the transformer model
-        // if (llama_decode(context.ctx, batch))
-        // {
-        //     fprintf(stderr, "%s : failed to eval, return code %d\n", __func__, 1);
-        //     return 1;
-        // }
-        llama_decode(ctx, batch);
+        llama_decode(context->ctx, batch); // use `->` instead of `.` when the object is passed as a pointer
         n_pos += batch.n_tokens;
 
         // sampling the next token
         {
-            new_token_id = llama_sampler_sample(sampler, ctx, -1);
-            // printf("(pos %i) -> new token id: %i\n", n_pos, new_token_id);
+            new_token_id = llama_sampler_sample(sampler, context->ctx, -1);
             // is it an end of generation?
             if (llama_vocab_is_eog(vocab, new_token_id))
             {
@@ -207,8 +133,55 @@ int main()
             decode_steps += 1;
         }
     }
+}
 
-    std::cout << "\ndecode steps: " << decode_steps;
+int main()
+{
+    const int MAX_OUTPUT_TOKENS = 64;
+    const std::string input_prompt = "What is quantum computing?";
+
+    ggml_backend_load_all();
+
+    ModelParams model_config = ModelParams();
+    model_config.model_path = "/Users/svc_sps/.lmstudio/models/lmstudio-community/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf";
+    model_config.n_gpu_layers = 999;
+    model_config.model_params = llama_model_default_params();
+
+    // model and vocab
+    llama_model *model = llama_model_load_from_file(model_config.model_path.c_str(), model_config.model_params);
+    if (model == NULL)
+    {
+        fprintf(stderr, "%s: error: unable to load model\n", __func__);
+        return 1;
+    }
+    const llama_vocab *vocab = llama_model_get_vocab(model);
+
+    // implementation will start from here 👇
+    /*
+    args:
+    const struct llama_vocab * vocab,
+                  const char * text,
+                     int32_t   text_len,
+                 llama_token * tokens,
+                     int32_t   n_tokens_max,
+                        bool   add_special,
+                        bool   parse_special)
+    */
+    const int n_input_tokens = -llama_tokenize(vocab, input_prompt.c_str(), input_prompt.size(), NULL, 0, true, true);
+    ContextInit context = get_context(model, n_input_tokens, MAX_OUTPUT_TOKENS);
+
+    // tokenize the prompt
+    std::vector<llama_token> prompt_tokens(n_input_tokens);
+    int n_tokens_max = prompt_tokens.size();
+
+    if (llama_tokenize(vocab, input_prompt.c_str(), input_prompt.size(), prompt_tokens.data(), n_tokens_max, true, true) < 0)
+    {
+        fprintf(stderr, "failed to tokenize the prompt\n");
+    }
+
+    llama_sampler *sampler = get_sampler();
+    batch_decode(model, vocab, sampler, &prompt_tokens, &context, n_input_tokens, MAX_OUTPUT_TOKENS);
+    // implementation ends here 👆“
 
     return 0;
 }
