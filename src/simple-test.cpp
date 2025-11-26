@@ -76,10 +76,29 @@ llama_sampler *get_sampler()
     return sampler;
 }
 
+struct llama_model_and_vocab
+{
+    llama_model *model;
+    const llama_vocab *vocab;
+};
+
+llama_model_and_vocab get_model_and_vocab(const std::string &model_path)
+{
+    ModelParams model_config = ModelParams();
+    model_config.model_path = model_path;
+    model_config.n_gpu_layers = 999;
+    model_config.model_params = llama_model_default_params();
+
+    // model and vocab
+    llama_model *model = llama_model_load_from_file(model_config.model_path.c_str(), model_config.model_params);
+    const llama_vocab *vocab = llama_model_get_vocab(model);
+
+    return llama_model_and_vocab{model, vocab};
+}
+
 void batch_decode(
     llama_model *model,
     const llama_vocab *vocab,
-    llama_sampler *sampler,
     std::vector<llama_token> *prompt_tokens,
     ContextInit *context,
     int n_input_tokens,
@@ -104,6 +123,8 @@ void batch_decode(
     {
         decoder_start_token_id = llama_vocab_bos(vocab);
     }
+
+    llama_sampler *sampler = get_sampler();
 
     int decode_steps = 0;
     llama_token new_token_id;
@@ -133,6 +154,7 @@ void batch_decode(
             decode_steps += 1;
         }
     }
+    printf("\n\nFinished batch decoding (%i steps)\n", decode_steps);
 }
 
 int main()
@@ -142,21 +164,15 @@ int main()
 
     ggml_backend_load_all();
 
-    ModelParams model_config = ModelParams();
-    model_config.model_path = "/Users/svc_sps/.lmstudio/models/lmstudio-community/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf";
-    model_config.n_gpu_layers = 999;
-    model_config.model_params = llama_model_default_params();
+    const std::string model_path = "/Users/svc_sps/.lmstudio/models/lmstudio-community/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf";
+    llama_model_and_vocab model_and_vocab = get_model_and_vocab(model_path);
 
-    // model and vocab
-    llama_model *model = llama_model_load_from_file(model_config.model_path.c_str(), model_config.model_params);
-    if (model == NULL)
+    if (model_and_vocab.model == NULL)
     {
         fprintf(stderr, "%s: error: unable to load model\n", __func__);
         return 1;
     }
-    const llama_vocab *vocab = llama_model_get_vocab(model);
 
-    // implementation will start from here 👇
     /*
     args:
     const struct llama_vocab * vocab,
@@ -167,21 +183,19 @@ int main()
                         bool   add_special,
                         bool   parse_special)
     */
-    const int n_input_tokens = -llama_tokenize(vocab, input_prompt.c_str(), input_prompt.size(), NULL, 0, true, true);
-    ContextInit context = get_context(model, n_input_tokens, MAX_OUTPUT_TOKENS);
+    const int n_input_tokens = -llama_tokenize(model_and_vocab.vocab, input_prompt.c_str(), input_prompt.size(), NULL, 0, true, true);
+    ContextInit context = get_context(model_and_vocab.model, n_input_tokens, MAX_OUTPUT_TOKENS);
 
     // tokenize the prompt
     std::vector<llama_token> prompt_tokens(n_input_tokens);
     int n_tokens_max = prompt_tokens.size();
 
-    if (llama_tokenize(vocab, input_prompt.c_str(), input_prompt.size(), prompt_tokens.data(), n_tokens_max, true, true) < 0)
+    if (llama_tokenize(model_and_vocab.vocab, input_prompt.c_str(), input_prompt.size(), prompt_tokens.data(), n_tokens_max, true, true) < 0)
     {
         fprintf(stderr, "failed to tokenize the prompt\n");
     }
 
-    llama_sampler *sampler = get_sampler();
-    batch_decode(model, vocab, sampler, &prompt_tokens, &context, n_input_tokens, MAX_OUTPUT_TOKENS);
-    // implementation ends here 👆“
+    batch_decode(model_and_vocab.model, model_and_vocab.vocab, &prompt_tokens, &context, n_input_tokens, MAX_OUTPUT_TOKENS);
 
     return 0;
 }
