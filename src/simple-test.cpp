@@ -102,6 +102,40 @@ llama_model_and_vocab get_model_and_vocab(const std::string &model_path)
     return llama_model_and_vocab{model, vocab};
 }
 
+struct llama_tokenizer
+{
+    const int n_input_tokens;
+    std::vector<llama_token> prompt_tokens;
+    ContextInit context;
+};
+
+llama_tokenizer tokenize_prompt(llama_model_and_vocab *model_and_vocab, const std::string &input_prompt, const int max_output_tokens)
+{
+    /*
+    llama_tokenize args:
+    const struct llama_vocab * vocab,
+                const char * text,
+                    int32_t   text_len,
+                llama_token * tokens,
+                    int32_t   n_tokens_max,
+                        bool   add_special,
+                        bool   parse_special)
+    */
+    const int n_input_tokens = -llama_tokenize(model_and_vocab->vocab, input_prompt.c_str(), input_prompt.size(), NULL, 0, true, true);
+    ContextInit context = get_context(model_and_vocab->model, n_input_tokens, max_output_tokens);
+    // tokenize the prompt
+    std::vector<llama_token> prompt_tokens(n_input_tokens);
+    int n_tokens_max = prompt_tokens.size();
+
+    if (llama_tokenize(model_and_vocab->vocab, input_prompt.c_str(), input_prompt.size(), prompt_tokens.data(), n_tokens_max, true, true) < 0)
+    {
+        fprintf(stderr, "failed to tokenize the prompt\n");
+        exit(EXIT_FAILURE);
+    }
+
+    return llama_tokenizer{n_input_tokens, prompt_tokens, context};
+}
+
 void batch_decode(
     llama_model *model,
     const llama_vocab *vocab,
@@ -165,37 +199,16 @@ void batch_decode(
 
 int main()
 {
-    const int MAX_OUTPUT_TOKENS = 64;
     const std::string input_prompt = "What is quantum computing?";
+    const int max_output_tokens = 128;
 
     ggml_backend_load_all();
 
     const std::string model_path = "/Users/svc_sps/.lmstudio/models/lmstudio-community/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf";
     llama_model_and_vocab model_and_vocab = get_model_and_vocab(model_path);
 
-    /*
-    args:
-    const struct llama_vocab * vocab,
-                const char * text,
-                    int32_t   text_len,
-                llama_token * tokens,
-                    int32_t   n_tokens_max,
-                        bool   add_special,
-                        bool   parse_special)
-    */
-    const int n_input_tokens = -llama_tokenize(model_and_vocab.vocab, input_prompt.c_str(), input_prompt.size(), NULL, 0, true, true);
-    ContextInit context = get_context(model_and_vocab.model, n_input_tokens, MAX_OUTPUT_TOKENS);
-
-    // tokenize the prompt
-    std::vector<llama_token> prompt_tokens(n_input_tokens);
-    int n_tokens_max = prompt_tokens.size();
-
-    if (llama_tokenize(model_and_vocab.vocab, input_prompt.c_str(), input_prompt.size(), prompt_tokens.data(), n_tokens_max, true, true) < 0)
-    {
-        fprintf(stderr, "failed to tokenize the prompt\n");
-    }
-
-    batch_decode(model_and_vocab.model, model_and_vocab.vocab, &prompt_tokens, &context, n_input_tokens, MAX_OUTPUT_TOKENS);
+    llama_tokenizer tokenizer = tokenize_prompt(&model_and_vocab, input_prompt, max_output_tokens);
+    batch_decode(model_and_vocab.model, model_and_vocab.vocab, &tokenizer.prompt_tokens, &tokenizer.context, tokenizer.n_input_tokens, max_output_tokens);
 
     return 0;
 }
