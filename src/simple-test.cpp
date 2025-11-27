@@ -93,7 +93,6 @@ llama_model_and_vocab get_model_and_vocab(const std::string &model_path)
     llama_model *model = llama_model_load_from_file(model_config.model_path.c_str(), model_config.model_params);
     const llama_vocab *vocab = llama_model_get_vocab(model);
 
-    model = NULL;
     if (model == NULL)
     {
         fprintf(stderr, "%s: error: unable to load model\n", __func__);
