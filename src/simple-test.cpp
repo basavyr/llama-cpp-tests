@@ -93,6 +93,13 @@ llama_model_and_vocab get_model_and_vocab(const std::string &model_path)
     llama_model *model = llama_model_load_from_file(model_config.model_path.c_str(), model_config.model_params);
     const llama_vocab *vocab = llama_model_get_vocab(model);
 
+    model = NULL;
+    if (model == NULL)
+    {
+        fprintf(stderr, "%s: error: unable to load model\n", __func__);
+        exit(EXIT_FAILURE);
+    }
+
     return llama_model_and_vocab{model, vocab};
 }
 
@@ -167,19 +174,13 @@ int main()
     const std::string model_path = "/Users/svc_sps/.lmstudio/models/lmstudio-community/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf";
     llama_model_and_vocab model_and_vocab = get_model_and_vocab(model_path);
 
-    if (model_and_vocab.model == NULL)
-    {
-        fprintf(stderr, "%s: error: unable to load model\n", __func__);
-        return 1;
-    }
-
     /*
     args:
     const struct llama_vocab * vocab,
-                  const char * text,
-                     int32_t   text_len,
-                 llama_token * tokens,
-                     int32_t   n_tokens_max,
+                const char * text,
+                    int32_t   text_len,
+                llama_token * tokens,
+                    int32_t   n_tokens_max,
                         bool   add_special,
                         bool   parse_special)
     */
