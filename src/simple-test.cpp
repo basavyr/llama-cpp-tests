@@ -5,6 +5,9 @@
 #include <string>
 #include <vector>
 #include <iostream>
+#include <chrono>
+
+FILE *log_file;
 
 struct ModelParams
 {
@@ -117,8 +120,10 @@ void batch_decode(
     std::vector<llama_token> *prompt_tokens,
     ContextInit *context,
     int n_input_tokens,
-    const int max_output_tokens)
+    const int max_output_tokens,
+    bool generate_logs)
 {
+    const auto t_start = ggml_time_us();
     /*
     llama_batch args:
         int32_t         n_tokens;
@@ -169,21 +174,59 @@ void batch_decode(
             decode_steps += 1;
         }
     }
-    printf("\n\nFinished batch decoding (%i steps)\n", decode_steps);
+    const auto t_end = ggml_time_us();
+    auto duration_s = (t_end - t_start) / 1000000.0f;
+    auto tokens_per_s = decode_steps / duration_s;
+
+    if (generate_logs == true)
+    {
+        fprintf(log_file, "%i, %f, %f\n", decode_steps, duration_s, tokens_per_s);
+    }
+
+    printf("\n\nFinished batch decoding (%i steps)[%f s]\n", decode_steps, duration_s);
+    printf("Tokens per second: %f\n", tokens_per_s);
+
+    llama_sampler_free(sampler);
+    llama_free(context->ctx); // context gets created within the tokenizer
 }
 
 int main()
 {
-    const std::string input_prompt = "What is quantum computing?";
-    const int max_output_tokens = 128;
+    // input configs
+    const std::vector<std::string> input_prompts = {"What is quantum computing?",
+                                                    "What is kernel fusion?",
+                                                    "Nvidia stock is very..."};
+    const int max_output_tokens = 512;
+    // model configs
+    const std::string model_path = "/Users/svc_sps/.lmstudio/models/lmstudio-community/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf";
 
     ggml_backend_load_all();
-
-    const std::string model_path = "/Users/svc_sps/.lmstudio/models/lmstudio-community/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf";
     llama_model_and_vocab model_and_vocab = get_model_and_vocab(model_path);
 
-    llama_tokenizer tokenizer = tokenize_prompt(&model_and_vocab, input_prompt, max_output_tokens);
-    batch_decode(model_and_vocab.model, model_and_vocab.vocab, &tokenizer.prompt_tokens, &tokenizer.context, tokenizer.n_input_tokens, max_output_tokens);
+    bool logging = true;
+    if (logging == true)
+    {
+        auto log_id = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        std::string log_name = "output-logs_";
+        log_name += std::to_string(log_id);
+        log_name += ".log";
+        log_file = fopen(log_name.c_str(), "w+b");
+        fprintf(log_file, "decode tokens,decode duration, tokens/s\n");
+    }
+
+    for (int prompt_idx = 0; prompt_idx < input_prompts.size(); ++prompt_idx)
+    {
+        printf("\nProcessing prompt %i -> %s\n", prompt_idx + 1, input_prompts[prompt_idx].c_str());
+        llama_tokenizer tokenizer = tokenize_prompt(&model_and_vocab, input_prompts[prompt_idx], max_output_tokens);
+        batch_decode(model_and_vocab.model, model_and_vocab.vocab, &tokenizer.prompt_tokens, &tokenizer.context, tokenizer.n_input_tokens, max_output_tokens, logging);
+    }
+
+    llama_model_free(model_and_vocab.model);
+
+    if (logging == true && log_file != NULL)
+    {
+        fclose(log_file);
+    }
 
     return 0;
 }
